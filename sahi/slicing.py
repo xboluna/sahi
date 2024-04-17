@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from PIL import Image
+from shapely import Polygon
 from shapely.errors import TopologicalError
 from tqdm import tqdm
 
@@ -70,9 +71,12 @@ def get_slice_bboxes(
         y_overlap = int(overlap_height_ratio * slice_height)
         x_overlap = int(overlap_width_ratio * slice_width)
     elif auto_slice_resolution:
-        x_overlap, y_overlap, slice_width, slice_height = get_auto_slice_params(height=image_height, width=image_width)
+        x_overlap, y_overlap, slice_width, slice_height = get_auto_slice_params(
+            height=image_height, width=image_width)
     else:
-        raise ValueError("Compute type is not auto and slice width and height are not provided.")
+        raise ValueError(
+            "Compute type is not auto and slice width and height are not provided."
+        )
 
     while y_max < image_height:
         x_min = x_max = 0
@@ -92,37 +96,9 @@ def get_slice_bboxes(
     return slice_bboxes
 
 
-def annotation_inside_slice(annotation: Dict, slice_bbox: List[int]) -> bool:
-    """Check whether annotation coordinates lie inside slice coordinates.
-
-    Args:
-        annotation (dict): Single annotation entry in COCO format.
-        slice_bbox (List[int]): Generated from `get_slice_bboxes`.
-            Format for each slice bbox: [x_min, y_min, x_max, y_max].
-
-    Returns:
-        (bool): True if any annotation coordinate lies inside slice.
-    """
-    left, top, width, height = annotation["bbox"]
-
-    right = left + width
-    bottom = top + height
-
-    if left >= slice_bbox[2]:
-        return False
-    if top >= slice_bbox[3]:
-        return False
-    if right <= slice_bbox[0]:
-        return False
-    if bottom <= slice_bbox[1]:
-        return False
-
-    return True
-
-
-def process_coco_annotations(
-    coco_annotation_list: List[CocoAnnotation], slice_bbox: List[int], min_area_ratio
-) -> List[CocoAnnotation]:
+def process_coco_annotations(coco_annotation_list: List[CocoAnnotation],
+                             slice_bbox: List[int],
+                             min_area_ratio) -> List[CocoAnnotation]:
     """Slices and filters given list of CocoAnnotation objects with given
     'slice_bbox' and 'min_area_ratio'.
 
@@ -140,14 +116,17 @@ def process_coco_annotations(
 
     sliced_coco_annotation_list: List[CocoAnnotation] = []
     for coco_annotation in coco_annotation_list:
-        if annotation_inside_slice(coco_annotation.json, slice_bbox):
-            sliced_coco_annotation = coco_annotation.get_sliced_coco_annotation(slice_bbox)
+        slice_bbox_polygon = Polygon([*slice_bbox, slice_bbox[0]])
+        if slice_bbox_polygon.intersects(coco_annotation.multipolygon):
+            sliced_coco_annotation = coco_annotation.get_sliced_coco_annotation(
+                slice_bbox)
             if sliced_coco_annotation.area / coco_annotation.area >= min_area_ratio:
                 sliced_coco_annotation_list.append(sliced_coco_annotation)
     return sliced_coco_annotation_list
 
 
 class SlicedImage:
+
     def __init__(self, image, coco_image, starting_pixel):
         """
         image: np.array
@@ -163,7 +142,10 @@ class SlicedImage:
 
 
 class SliceImageResult:
-    def __init__(self, original_image_size: List[int], image_dir: Optional[str] = None):
+
+    def __init__(self,
+                 original_image_size: List[int],
+                 image_dir: Optional[str] = None):
         """
         image_dir: str
             Directory of the sliced image exports.
@@ -235,6 +217,7 @@ class SliceImageResult:
         return filenames
 
     def __getitem__(self, i):
+
         def _prepare_ith_dict(i):
             return {
                 "image": self.images[i],
@@ -315,7 +298,8 @@ def slice_image(
     # define verboseprint
     verboselog = logger.info if verbose else lambda *a, **k: None
 
-    def _export_single_slice(image: np.ndarray, output_dir: str, slice_file_name: str):
+    def _export_single_slice(image: np.ndarray, output_dir: str,
+                             slice_file_name: str):
         image_pil = read_image_as_pil(image)
         slice_file_path = str(Path(output_dir) / slice_file_name)
         # export sliced image
@@ -333,7 +317,8 @@ def slice_image(
 
     image_width, image_height = image_pil.size
     if not (image_width != 0 and image_height != 0):
-        raise RuntimeError(f"invalid image size: {image_pil.size} for 'slice_image'.")
+        raise RuntimeError(
+            f"invalid image size: {image_pil.size} for 'slice_image'.")
     slice_bboxes = get_slice_bboxes(
         image_height=image_height,
         image_width=image_width,
@@ -347,7 +332,8 @@ def slice_image(
     n_ims = 0
 
     # init images and annotations lists
-    sliced_image_result = SliceImageResult(original_image_size=[image_height, image_width], image_dir=output_dir)
+    sliced_image_result = SliceImageResult(
+        original_image_size=[image_height, image_width], image_dir=output_dir)
 
     image_pil_arr = np.asarray(image_pil)
     # iterate over slices
@@ -380,22 +366,27 @@ def slice_image(
         # create coco image
         slice_width = slice_bbox[2] - slice_bbox[0]
         slice_height = slice_bbox[3] - slice_bbox[1]
-        coco_image = CocoImage(file_name=slice_file_name, height=slice_height, width=slice_width)
+        coco_image = CocoImage(file_name=slice_file_name,
+                               height=slice_height,
+                               width=slice_width)
 
         # append coco annotations (if present) to coco image
         if coco_annotation_list is not None:
-            for sliced_coco_annotation in process_coco_annotations(coco_annotation_list, slice_bbox, min_area_ratio):
+            for sliced_coco_annotation in process_coco_annotations(
+                    coco_annotation_list, slice_bbox, min_area_ratio):
                 coco_image.add_annotation(sliced_coco_annotation)
 
         # create sliced image and append to sliced_image_result
         sliced_image = SlicedImage(
-            image=image_pil_slice, coco_image=coco_image, starting_pixel=[slice_bbox[0], slice_bbox[1]]
-        )
+            image=image_pil_slice,
+            coco_image=coco_image,
+            starting_pixel=[slice_bbox[0], slice_bbox[1]])
         sliced_image_result.add_sliced_image(sliced_image)
 
     # export slices if output directory is provided
     if output_file_name and output_dir:
-        conc_exec = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        conc_exec = concurrent.futures.ThreadPoolExecutor(
+            max_workers=MAX_WORKERS)
         conc_exec.map(
             _export_single_slice,
             sliced_image_result.images,
@@ -403,9 +394,8 @@ def slice_image(
             sliced_image_result.filenames,
         )
 
-    verboselog(
-        "Num slices: " + str(n_ims) + " slice_height: " + str(slice_height) + " slice_width: " + str(slice_width)
-    )
+    verboselog("Num slices: " + str(n_ims) + " slice_height: " +
+               str(slice_height) + " slice_width: " + str(slice_width))
 
     return sliced_image_result
 
@@ -487,15 +477,18 @@ def slice_coco(
             # append slice outputs
             sliced_coco_images.extend(slice_image_result.coco_images)
         except TopologicalError:
-            logger.warning(f"Invalid annotation found, skipping this image: {image_path}")
+            logger.warning(
+                f"Invalid annotation found, skipping this image: {image_path}")
 
     # create and save coco dict
     coco_dict = create_coco_dict(
-        sliced_coco_images, coco_dict["categories"], ignore_negative_samples=ignore_negative_samples
-    )
+        sliced_coco_images,
+        coco_dict["categories"],
+        ignore_negative_samples=ignore_negative_samples)
     save_path = ""
     if output_coco_annotation_file_name and output_dir:
-        save_path = Path(output_dir) / (output_coco_annotation_file_name + "_coco.json")
+        save_path = Path(output_dir) / (output_coco_annotation_file_name +
+                                        "_coco.json")
         save_json(coco_dict, save_path)
 
     return coco_dict, save_path
@@ -558,8 +551,8 @@ def calc_aspect_ratio_orientation(width: int, height: int) -> str:
 
 
 def calc_slice_and_overlap_params(
-    resolution: str, height: int, width: int, orientation: str
-) -> Tuple[int, int, int, int]:
+        resolution: str, height: int, width: int,
+        orientation: str) -> Tuple[int, int, int, int]:
     """
     This function calculate according to image resolution slice and overlap params.
     Args:
@@ -574,18 +567,15 @@ def calc_slice_and_overlap_params(
 
     if resolution == "medium":
         split_row, split_col, overlap_height_ratio, overlap_width_ratio = calc_ratio_and_slice(
-            orientation, slide=1, ratio=0.8
-        )
+            orientation, slide=1, ratio=0.8)
 
     elif resolution == "high":
         split_row, split_col, overlap_height_ratio, overlap_width_ratio = calc_ratio_and_slice(
-            orientation, slide=2, ratio=0.4
-        )
+            orientation, slide=2, ratio=0.4)
 
     elif resolution == "ultra-high":
         split_row, split_col, overlap_height_ratio, overlap_width_ratio = calc_ratio_and_slice(
-            orientation, slide=4, ratio=0.4
-        )
+            orientation, slide=4, ratio=0.4)
     else:  # low condition
         split_col = 1
         split_row = 1
@@ -601,7 +591,8 @@ def calc_slice_and_overlap_params(
     return x_overlap, y_overlap, slice_width, slice_height
 
 
-def get_resolution_selector(res: str, height: int, width: int) -> Tuple[int, int, int, int]:
+def get_resolution_selector(res: str, height: int,
+                            width: int) -> Tuple[int, int, int, int]:
     """
 
     Args:
@@ -614,8 +605,7 @@ def get_resolution_selector(res: str, height: int, width: int) -> Tuple[int, int
     """
     orientation = calc_aspect_ratio_orientation(width=width, height=height)
     x_overlap, y_overlap, slice_width, slice_height = calc_slice_and_overlap_params(
-        resolution=res, height=height, width=width, orientation=orientation
-    )
+        resolution=res, height=height, width=width, orientation=orientation)
 
     return x_overlap, y_overlap, slice_width, slice_height
 
@@ -682,7 +672,8 @@ def shift_bboxes(bboxes, offset: Sequence[int]):
         return shifted_bboxes
 
 
-def shift_masks(masks: np.ndarray, offset: Sequence[int], full_shape: Sequence[int]) -> np.ndarray:
+def shift_masks(masks: np.ndarray, offset: Sequence[int],
+                full_shape: Sequence[int]) -> np.ndarray:
     """Shift masks to the original image.
     Args:
         masks (np.ndarray): masks that need to be shifted.

@@ -223,11 +223,14 @@ class CocoAnnotation:
             shapely_annotation = ShapelyAnnotation.from_coco_bbox(bbox=bbox)
         self._shapely_annotation = shapely_annotation
 
+    @property
+    def multipolygon(self):
+        return self._shapely_annotation.multipolygon
+
     def get_sliced_coco_annotation(self, slice_bbox: List[int]):
         shapely_polygon = box(slice_bbox[0], slice_bbox[1], slice_bbox[2], slice_bbox[3])
-        samp = self._shapely_annotation.multipolygon
-        if not samp.is_valid:
-            valid = make_valid(samp)
+        if not self.multipolygon.is_valid:
+            valid = make_valid(self.multipolygon)
             if not isinstance(valid, MultiPolygon):
                 valid = MultiPolygon([valid])
             self._shapely_annotation.multipolygon = valid
